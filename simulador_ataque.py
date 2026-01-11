@@ -3,11 +3,14 @@ import argparse
 import random
 import time
 import sys
+import os
 from datetime import datetime
 
 # =========================
 # CONFIGURAÇÕES
 # =========================
+
+LOG_FILE_PATH = "/export/logs/openresty/access.log"
 
 ATTACKER_IPS = [
     "45.83.91.5",
@@ -67,15 +70,17 @@ STATUS_LEGIT = [200, 200, 200, 301, 302]
 def timestamp():
     return datetime.now().strftime("%d/%b/%Y:%H:%M:%S -0300")
 
-def print_log(ip, domain, endpoint, status, ua):
-    print(
+def write_log(f, ip, domain, endpoint, status, ua):
+    line = (
         f"{timestamp():<28} {ip:<15} {domain:<20} "
-        f"GET {endpoint:<18} {status:<4} {ua}",
-        flush=True
+        f"GET {endpoint:<18} {status:<4} {ua}"
     )
+    f.write(line + "\n")
+    f.flush()
 
-def attack_1ip_1site(ip, domain):
-    print_log(
+def attack_1ip_1site(f, ip, domain):
+    write_log(
+        f,
         ip,
         domain,
         random.choice(ENDPOINTS_ATTACK),
@@ -83,8 +88,9 @@ def attack_1ip_1site(ip, domain):
         random.choice(ATTACK_UA)
     )
 
-def attack_1ip_multisite(ip):
-    print_log(
+def attack_1ip_multisite(f, ip):
+    write_log(
+        f,
         ip,
         random.choice(DOMAINS),
         random.choice(ENDPOINTS_ATTACK),
@@ -92,8 +98,9 @@ def attack_1ip_multisite(ip):
         random.choice(ATTACK_UA)
     )
 
-def attack_multiip_1site(domain):
-    print_log(
+def attack_multiip_1site(f, domain):
+    write_log(
+        f,
         random.choice(ATTACKER_IPS),
         domain,
         random.choice(ENDPOINTS_ATTACK),
@@ -101,8 +108,9 @@ def attack_multiip_1site(domain):
         random.choice(ATTACK_UA)
     )
 
-def legit_traffic():
-    print_log(
+def legit_traffic(f):
+    write_log(
+        f,
         random.choice(LEGIT_IPS),
         random.choice(DOMAINS),
         random.choice(ENDPOINTS_LEGIT),
@@ -110,20 +118,20 @@ def legit_traffic():
         random.choice(LEGIT_UA)
     )
 
-def realistic_mode(ip_fixed, domain_fixed):
+def realistic_mode(f, ip_fixed, domain_fixed):
     roll = random.randint(1, 100)
 
     if roll <= 60:
-        legit_traffic()
+        legit_traffic(f)
     elif roll <= 70:
-        attack_1ip_1site(ip_fixed, domain_fixed)
+        attack_1ip_1site(f, ip_fixed, domain_fixed)
     elif roll <= 80:
-        attack_1ip_multisite(ip_fixed)
+        attack_1ip_multisite(f, ip_fixed)
     elif roll <= 95:
-        attack_multiip_1site(domain_fixed)
+        attack_multiip_1site(f, domain_fixed)
     else:
         for _ in range(random.randint(3, 6)):
-            attack_1ip_multisite(ip_fixed)
+            attack_1ip_multisite(f, ip_fixed)
 
 # =========================
 # MAIN
@@ -160,49 +168,51 @@ def main():
         help="Número mínimo garantido de ataques por IP atacante"
     )
 
-    # 👉 SE NÃO PASSAR NADA, MOSTRA O HELP
+    # Se rodar sem argumentos → help
     if len(sys.argv) == 1:
         parser.print_help()
         sys.exit(0)
 
     args = parser.parse_args()
 
-    # Validação manual (mais clara que argparse puro)
     if not args.attack or not args.duration:
         print("\n❌ Erro: --attack e --duration são obrigatórios.\n")
         parser.print_help()
         sys.exit(1)
 
+    # Garante diretório
+    os.makedirs(os.path.dirname(LOG_FILE_PATH), exist_ok=True)
+
     domain_fixed = random.choice(DOMAINS)
     end_time = time.time() + args.duration
 
-    # =========================
-    # FASE 1 — MÍNIMO GARANTIDO
-    # =========================
+    with open(LOG_FILE_PATH, "a") as f:
 
-    if args.min_attacks > 0:
-        for ip in ATTACKER_IPS:
-            for _ in range(args.min_attacks):
-                attack_1ip_multisite(ip)
-                time.sleep(random.uniform(0.1, 0.4))
+        # =========================
+        # FASE 1 — MÍNIMO GARANTIDO
+        # =========================
+        if args.min_attacks > 0:
+            for ip in ATTACKER_IPS:
+                for _ in range(args.min_attacks):
+                    attack_1ip_multisite(f, ip)
+                    time.sleep(random.uniform(0.1, 0.4))
 
-    # =========================
-    # FASE 2 — EXECUÇÃO NORMAL
-    # =========================
+        # =========================
+        # FASE 2 — EXECUÇÃO NORMAL
+        # =========================
+        ip_fixed = random.choice(ATTACKER_IPS)
 
-    ip_fixed = random.choice(ATTACKER_IPS)
+        while time.time() < end_time:
+            if args.attack == "1ip_1site":
+                attack_1ip_1site(f, ip_fixed, domain_fixed)
+            elif args.attack == "1ip_multisite":
+                attack_1ip_multisite(f, ip_fixed)
+            elif args.attack == "multiip_1site":
+                attack_multiip_1site(f, domain_fixed)
+            elif args.attack == "realistic":
+                realistic_mode(f, ip_fixed, domain_fixed)
 
-    while time.time() < end_time:
-        if args.attack == "1ip_1site":
-            attack_1ip_1site(ip_fixed, domain_fixed)
-        elif args.attack == "1ip_multisite":
-            attack_1ip_multisite(ip_fixed)
-        elif args.attack == "multiip_1site":
-            attack_multiip_1site(domain_fixed)
-        elif args.attack == "realistic":
-            realistic_mode(ip_fixed, domain_fixed)
-
-        time.sleep(random.uniform(0.2, 1.0))
+            time.sleep(random.uniform(0.2, 1.0))
 
 if __name__ == "__main__":
     main()
